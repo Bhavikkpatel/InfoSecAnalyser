@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import os
 import json
+import plotly.express as px
 
 # Configuration
 st.set_page_config(page_title="Excel Q&A MVP", page_icon="📊", layout="wide")
@@ -51,6 +52,9 @@ for message in st.session_state.messages:
                 }).set_index(graph_data["x_label"])
                 if graph_data.get("graph_type") == "line":
                     st.line_chart(chart_df)
+                elif graph_data.get("graph_type") == "pie":
+                    fig = px.pie(chart_df.reset_index(), names=graph_data["x_label"], values=graph_data["y_label"])
+                    st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.bar_chart(chart_df)
             except Exception:
@@ -92,6 +96,9 @@ if prompt := st.chat_input("Ask a question about your data (e.g., 'How many high
                                 
                                 if graph_data.get("graph_type") == "line":
                                     st.line_chart(chart_df)
+                                elif graph_data.get("graph_type") == "pie":
+                                    fig = px.pie(chart_df.reset_index(), names=graph_data["x_label"], values=graph_data["y_label"])
+                                    st.plotly_chart(fig, use_container_width=True)
                                 else:
                                     st.bar_chart(chart_df)
                                     

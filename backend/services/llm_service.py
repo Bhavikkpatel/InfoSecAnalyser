@@ -50,8 +50,11 @@ And the user's query: "{query}"
 Write a valid Pandas `df.query()` string to filter the dataframe to answer the user's question.
 If the query doesn't require filtering, just output: None
 Map the user's terms to the closest matching column names.
-ONLY return the query string itself, without quotes around the whole string. No markdown formatting, no explanations.
-For example, if the user asks "how many open risks", and columns are ['Status', 'Risk'], output: Status == 'Open'
+CRITICAL MANDATORY RULES:
+1. ONLY return the query string itself, without quotes around the whole string. No markdown formatting, no explanations.
+2. If a column name contains spaces or special characters, you MUST wrap the column name in backticks (`).
+3. The query MUST be a full boolean condition (e.g. `Column Name` == 'Yes' or `Column Name` > 5). DO NOT just return the column name.
+For example, if columns are ['Incident Response', 'Status'] and query is "open incidents": `Incident Response` == 'Yes' and Status == 'Open'
 """
     payload = {
         "model": MODEL_NAME,
