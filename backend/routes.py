@@ -35,7 +35,18 @@ async def query_excel(request: QueryRequest):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
         
-    if is_count_query(request.query):
+    # Check for graph keyword first
+    from .services.excel_service import is_graph_query, run_graph_query
+    if is_graph_query(request.query):
+        try:
+            graph_data = run_graph_query(file_path, request.query)
+            if "error" in graph_data:
+                return {"answer": graph_data["error"], "type": "error"}
+            return {"answer": "Graph generated successfully.", "type": "graph", "graph_data": graph_data}
+        except Exception as e:
+            return {"answer": f"Error rendering graph: {str(e)}", "type": "error"}
+            
+    elif is_count_query(request.query):
         try:
             result = run_count_query(file_path, request.query)
             return {"answer": result, "type": "count"}

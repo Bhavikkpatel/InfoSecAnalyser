@@ -42,6 +42,19 @@ st.header("2. Ask Questions")
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if message.get("graph_data"):
+            graph_data = message["graph_data"]
+            try:
+                chart_df = pd.DataFrame({
+                    graph_data["x_label"]: graph_data["x"],
+                    graph_data["y_label"]: graph_data["y"]
+                }).set_index(graph_data["x_label"])
+                if graph_data.get("graph_type") == "line":
+                    st.line_chart(chart_df)
+                else:
+                    st.bar_chart(chart_df)
+            except Exception:
+                pass
 
 if prompt := st.chat_input("Ask a question about your data (e.g., 'How many high risk items?')"):
     st.chat_message("user").markdown(prompt)
@@ -66,7 +79,26 @@ if prompt := st.chat_input("Ask a question about your data (e.g., 'How many high
                         response_text = f"**[{q_type.upper()}]**\n\n{answer}"
                         st.markdown(response_text)
                         
-                        st.session_state.messages.append({"role": "assistant", "content": response_text})
+                        if q_type == "graph" and "graph_data" in data:
+                            graph_data = data["graph_data"]
+                            try:
+                                # Prepare dataframe for streamlit plotting
+                                chart_df = pd.DataFrame({
+                                    graph_data["x_label"]: graph_data["x"],
+                                    graph_data["y_label"]: graph_data["y"]
+                                }).set_index(graph_data["x_label"])
+                                
+                                st.write(f"### {graph_data['y_label']} by {graph_data['x_label']}")
+                                
+                                if graph_data.get("graph_type") == "line":
+                                    st.line_chart(chart_df)
+                                else:
+                                    st.bar_chart(chart_df)
+                                    
+                            except Exception as e:
+                                st.error(f"Failed to render graph from data: {e}")
+                        
+                        st.session_state.messages.append({"role": "assistant", "content": response_text, "graph_data": data.get("graph_data") if q_type == "graph" else None})
                     else:
                         st.error(f"Backend Error: {res.text}")
                 except Exception as e:
