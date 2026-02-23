@@ -131,28 +131,57 @@ def generate_custom_chart_figure(df, config):
     y_col = config.get("y_col") 
     aggr = config.get("aggregation", "count")
     graph_type = config.get("graph_type", "bar")
+    chart_name = config.get("title", "Untitled Chart")
     
     # If the LLM generates a literal None/null for aggregation, fallback to count
     if not aggr or str(aggr).lower() == 'none':
         aggr = 'count'
     
+    # Handle x_col being None or not in columns — try fuzzy matching
     if not x_col or x_col not in df.columns:
-        raise ValueError(f"Valid 'x_col' required (got {x_col}).")
-        
+        matched = [c for c in df.columns if c.lower() == str(x_col).lower()]
+        if matched:
+            x_col = matched[0]
+        else:
+            raise ValueError(f"Column '{x_col}' not found in data. Chart: '{chart_name}'")
+    
+    # Auto-detect date columns → force line chart grouped by month
+    is_date = pd.api.types.is_datetime64_any_dtype(df[x_col])
+    if not is_date:
+        try:
+            pd.to_datetime(df[x_col], errors='raise')
+            is_date = True
+        except Exception:
+            pass
+    
+    if is_date:
+        graph_type = "line"  # Never pie for dates
+        temp = df.copy()
+        temp[x_col] = pd.to_datetime(temp[x_col], errors='coerce')
+        temp['_month'] = temp[x_col].dt.to_period('M').astype(str)
+        grouped = temp.groupby('_month').size().reset_index(name='count')
+        grouped = grouped.sort_values('_month')
+        chart_title = config.get("title", f"Trend: {x_col}")
+        return px.line(grouped, x='_month', y='count', title=chart_title, markers=True)
+    
+    # Too many categories? Force bar instead of pie
+    n_unique = df[x_col].nunique()
+    if graph_type == "pie" and n_unique > 10:
+        graph_type = "bar"
+    
     if aggr == 'count':
         grouped = df.groupby(x_col).size().reset_index(name='count')
         y_col_out = 'count'
     else:
         if not y_col or y_col not in df.columns:
             raise ValueError(f"Valid 'y_col' required for aggregation '{aggr}'")
-        # Ensure y_col is numeric if we're aggregating
         grouped = df.groupby(x_col)[y_col].agg(aggr).reset_index()
         y_col_out = y_col
         
     chart_title = config.get("title", f"{y_col_out} by {x_col}")
         
     if graph_type == "line":
-        return px.line(grouped, x=x_col, y=y_col_out, title=chart_title)
+        return px.line(grouped, x=x_col, y=y_col_out, title=chart_title, markers=True)
     elif graph_type == "pie":
         return px.pie(grouped, names=x_col, values=y_col_out, title=chart_title)
     else:
@@ -372,18 +401,40 @@ else:
                             st.rerun()
                             
                     try:
-                        fig_custom = generate_custom_chart_figure(filtered_df, graph_item['config'])
-                        base_key = f"custom_chart_{i}"
-                        st.plotly_chart(fig_custom, use_container_width=True, on_select="rerun", selection_mode="points", key=get_chart_key(base_key))
-                        
-                        x_col = graph_item['config'].get('x_col')
-                        handle_chart_click(
-                            base_key, filtered_df, 
-                            lambda val, xc=x_col: f"Drill-down: {xc} = {val}", 
-                            lambda df, val, xc=x_col: df[df[xc].astype(str) == str(val)]
-                        )
+                        config = graph_item['config']
+                        desc = config.get('description', '')
+                        if config.get('graph_type') == 'metric':
+                            # Render as KPI metric widgets
+                            x_col = config.get('x_col')
+                            if x_col and x_col in filtered_df.columns:
+                                title = config.get('title', x_col)
+                                st.markdown(f"**{title}**")
+                                counts = filtered_df[x_col].value_counts()
+                                metric_cols = st.columns(min(len(counts), 6))
+                                for j, (val, count) in enumerate(counts.items()):
+                                    if j < 6:
+                                        metric_cols[j].metric(label=str(val), value=count)
+                                if desc:
+                                    st.caption(f"💡 {desc}")
+                            else:
+                                chart_name = graph_item.get('query', config.get('title', 'Unknown'))
+                                st.warning(f"⚠️ **{chart_name}**: Column '{x_col}' not found.")
+                        else:
+                            fig_custom = generate_custom_chart_figure(filtered_df, config)
+                            base_key = f"custom_chart_{i}"
+                            st.plotly_chart(fig_custom, use_container_width=True, on_select="rerun", selection_mode="points", key=get_chart_key(base_key))
+                            if desc:
+                                st.caption(f"💡 {desc}")
+                            
+                            x_col = config.get('x_col')
+                            handle_chart_click(
+                                base_key, filtered_df, 
+                                lambda val, xc=x_col: f"Drill-down: {xc} = {val}", 
+                                lambda df, val, xc=x_col: df[df[xc].astype(str) == str(val)]
+                            )
                     except Exception as e:
-                        st.error(f"Error rendering chart: {e}")
+                        chart_name = graph_item.get('query', graph_item['config'].get('title', 'Unknown'))
+                        st.warning(f"⚠️ **{chart_name}**: Could not render — {e}")
             
             # 6. Drill-Down Section
             st.markdown("---")
@@ -426,7 +477,11 @@ if uploaded_file is not None and not error:
     prompt = st.chat_input("💬 Ask a question or type 'plot [graph type]...' to generate a chart")
     if prompt:
         st.session_state.copilot_history.append({"role": "user", "content": prompt})
-        is_graph_req = any(w in prompt.lower() for w in ['plot', 'draw', 'graph', 'chart', 'visualize', 'pie', 'bar', 'trend', 'scatter'])
+        is_graph_req = any(w in prompt.lower() for w in [
+            'plot', 'draw', 'graph', 'chart', 'visualize', 'pie', 'bar', 'trend', 'scatter',
+            'show', 'breakdown', 'distribution', 'coverage', 'compliance', 'count',
+            'metric', 'compare', 'generate', 'widget', 'display', 'overview'
+        ])
         
         with st.spinner("Copilot is analyzing..."):
             import sys
@@ -438,7 +493,7 @@ if uploaded_file is not None and not error:
             
             if is_graph_req:
                 from backend.services.llm_service import generate_graph_config
-                configs = generate_graph_config(prompt, list(filtered_df.columns), api_key=_api_key)
+                configs = generate_graph_config(prompt, list(filtered_df.columns), api_key=_api_key, df=filtered_df)
                 if configs and len(configs) > 0:
                     for cfg in configs:
                         title = cfg.get("title", prompt)
