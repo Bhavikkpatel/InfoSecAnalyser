@@ -1,9 +1,11 @@
 import requests
 import json
+import time
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "mistral"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 # ---------- Internal helpers ----------
 
@@ -30,22 +32,29 @@ def _call_ollama(prompt: str, format_json: bool = False, timeout: int = 60) -> s
     return response.json().get("response", "").strip()
 
 
-def _call_gemini(prompt: str, api_key: str, timeout: int = 60) -> str:
-    """Call Google Gemini API and return the raw text response."""
-    url = f"{GEMINI_API_URL}?key={api_key}"
+def _call_gemini(prompt: str, api_key: str, timeout: int = 60, max_retries: int = 3) -> str:
+    """Call Google Gemini API with retry logic for rate limits."""
+    url = f"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent?key={api_key}"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}]
     }
-    response = requests.post(url, json=payload, timeout=timeout)
-    response.raise_for_status()
-    result = response.json()
-    # Extract text from Gemini response
-    candidates = result.get("candidates", [])
-    if candidates:
-        parts = candidates[0].get("content", {}).get("parts", [])
-        if parts:
-            return parts[0].get("text", "").strip()
-    return ""
+    
+    for attempt in range(max_retries):
+        response = requests.post(url, json=payload, timeout=timeout)
+        if response.status_code == 429:
+            wait_time = 2 ** (attempt + 1)  # 2s, 4s, 8s
+            time.sleep(wait_time)
+            continue
+        response.raise_for_status()
+        result = response.json()
+        candidates = result.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts:
+                return parts[0].get("text", "").strip()
+        return ""
+    
+    raise Exception("Gemini API rate limit exceeded. Please wait a moment and try again.")
 
 
 def _call_llm(prompt: str, api_key: str = "", format_json: bool = False, timeout: int = 60) -> str:

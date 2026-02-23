@@ -175,7 +175,7 @@ with st.sidebar:
     
 if uploaded_file is None:
     st.info("👈 Please upload the TPRM Assessment Excel file in the sidebar to view the dashboard.")
-    st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?fm=jpg&q=80&w=2000&blend=000000&blend-mode=overlay&blend-alpha=30", use_column_width=True)
+    st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?fm=jpg&q=80&w=2000&blend=000000&blend-mode=overlay&blend-alpha=30", use_container_width=True)
 else:
     # 1. Automatic Load & Cache
     with st.spinner("Processing Risk Data..."):
