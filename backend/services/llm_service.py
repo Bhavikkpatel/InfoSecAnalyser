@@ -1,17 +1,75 @@
 import requests
-from .excel_service import load_dataframe
+import json
 
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "mistral"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
-def answer_generative_query(file_path: str, query: str) -> str:
+# ---------- Internal helpers ----------
+
+def _ollama_available():
+    """Quick check if Ollama is reachable."""
+    try:
+        r = requests.get("http://localhost:11434/api/tags", timeout=2)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _call_ollama(prompt: str, format_json: bool = False, timeout: int = 60) -> str:
+    """Call the local Ollama API and return the raw text response."""
+    payload = {
+        "model": MODEL_NAME,
+        "prompt": prompt,
+        "stream": False
+    }
+    if format_json:
+        payload["format"] = "json"
+    response = requests.post(OLLAMA_API_URL, json=payload, timeout=timeout)
+    response.raise_for_status()
+    return response.json().get("response", "").strip()
+
+
+def _call_gemini(prompt: str, api_key: str, timeout: int = 60) -> str:
+    """Call Google Gemini API and return the raw text response."""
+    url = f"{GEMINI_API_URL}?key={api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    response = requests.post(url, json=payload, timeout=timeout)
+    response.raise_for_status()
+    result = response.json()
+    # Extract text from Gemini response
+    candidates = result.get("candidates", [])
+    if candidates:
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if parts:
+            return parts[0].get("text", "").strip()
+    return ""
+
+
+def _call_llm(prompt: str, api_key: str = "", format_json: bool = False, timeout: int = 60) -> str:
+    """Try Ollama first, fall back to Gemini if unavailable."""
+    if _ollama_available():
+        return _call_ollama(prompt, format_json=format_json, timeout=timeout)
+    elif api_key:
+        return _call_gemini(prompt, api_key, timeout=timeout)
+    else:
+        raise ConnectionError(
+            "Ollama is not running and no Gemini API key is configured. "
+            "Please enter your Gemini API key in Settings (sidebar)."
+        )
+
+
+# ---------- Public functions ----------
+
+def answer_generative_query(file_path: str, query: str, api_key: str = "") -> str:
+    from .excel_service import load_dataframe
     df = load_dataframe(file_path)
-    
-    # For MVP, send a representative sample of rows
-    # Mistral 7B has an 8k context window, keeping it concise
+
     sample_df = df.head(30)
     data_csv = sample_df.to_csv(index=False)
-    
+
     prompt = f"""
 You are an expert data analyst AI assistant helping a user answer questions based on their Excel data.
 Here is a sample of the data (in CSV format) to give you context:
@@ -24,24 +82,15 @@ Please answer the user's question clearly and concisely based on the data provid
 If the question asks about data beyond the sample provided, mention that you are only 
 analyzing a sample of {len(sample_df)} rows.
 """
-    
-    payload = {
-        "model": MODEL_NAME,
-        "prompt": prompt,
-        "stream": False
-    }
-    
     try:
-        response = requests.post(OLLAMA_API_URL, json=payload, timeout=120)
-        response.raise_for_status()
-        result = response.json()
-        return result.get("response", "No response from model.")
-    except requests.exceptions.ConnectionError:
-        return "Error: Could not connect to local Ollama. Make sure Ollama is running and accessible."
+        return _call_llm(prompt, api_key=api_key, timeout=120)
+    except ConnectionError as e:
+        return str(e)
     except Exception as e:
-        return f"Error communicating with local Ollama model: {str(e)}"
+        return f"Error communicating with AI model: {str(e)}"
 
-def generate_pandas_filter(query: str, columns: list) -> str:
+
+def generate_pandas_filter(query: str, columns: list, api_key: str = "") -> str:
     prompt = f"""
 You are an expert Python data scientist.
 Given the following pandas dataframe columns: {columns}
@@ -56,30 +105,24 @@ CRITICAL MANDATORY RULES:
 3. The query MUST be a full boolean condition (e.g. `Column Name` == 'Yes' or `Column Name` > 5). DO NOT just return the column name.
 For example, if columns are ['Incident Response', 'Status'] and query is "open incidents": `Incident Response` == 'Yes' and Status == 'Open'
 """
-    payload = {
-        "model": MODEL_NAME,
-        "prompt": prompt,
-        "stream": False
-    }
     try:
-        response = requests.post(OLLAMA_API_URL, json=payload, timeout=30)
-        response.raise_for_status()
-        result = response.json().get("response", "").strip()
+        result = _call_llm(prompt, api_key=api_key, timeout=30)
         # Strip code formatting if the LLM includes it
         if result.startswith("```"):
             result = result.split("\n", 1)[-1].rsplit("\n", 1)[0]
-        
+
         result = result.strip()
         if result.startswith("`") and result.endswith("`"):
             result = result[1:-1].strip()
         elif result.startswith('"') and result.endswith('"'):
             result = result[1:-1].strip()
-            
+
         return result
     except Exception:
         return "None"
 
-def generate_graph_config(query: str, columns: list) -> dict:
+
+def generate_graph_config(query: str, columns: list, api_key: str = "") -> dict:
     prompt = f"""
 You are a data visualization assistant.
 Given the pandas columns: {columns}
@@ -97,19 +140,22 @@ Example Output:
 
 DO NOT return any Markdown formatting (no ` ```json ` blocks), only the raw JSON.
 """
-    payload = {
-        "model": MODEL_NAME,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json"
-    }
-    import json
     try:
-        response = requests.post(OLLAMA_API_URL, json=payload, timeout=30)
-        response.raise_for_status()
-        result_text = response.json().get("response", "").strip()
+        result_text = _call_llm(prompt, api_key=api_key, format_json=True, timeout=30)
+        # Strip markdown formatting if present
+        if result_text.startswith("```"):
+            result_text = result_text.split("\n", 1)[-1].rsplit("\n", 1)[0]
         result_json = json.loads(result_text)
         return result_json
     except Exception:
         return {}
 
+
+def call_generative(prompt: str, api_key: str = "", timeout: int = 60) -> str:
+    """Generic generative call used by the dashboard copilot."""
+    try:
+        return _call_llm(prompt, api_key=api_key, timeout=timeout)
+    except ConnectionError as e:
+        return str(e)
+    except Exception as e:
+        return f"Error: {str(e)}"

@@ -160,6 +160,19 @@ with st.sidebar:
     st.header("📂 Data Upload")
     uploaded_file = st.file_uploader("Upload TPRM Excel Data", type=["xls", "xlsx"])
     
+    st.markdown("---")
+    with st.expander("⚙️ Settings", expanded=False):
+        gemini_key = st.text_input(
+            "Gemini API Key",
+            value=st.session_state.get("gemini_api_key", ""),
+            type="password",
+            placeholder="Enter your Gemini API key",
+            help="Stored in memory only. Resets when you refresh the page."
+        )
+        if gemini_key != st.session_state.get("gemini_api_key", ""):
+            st.session_state.gemini_api_key = gemini_key
+            st.success("API key saved for this session!")
+    
 if uploaded_file is None:
     st.info("👈 Please upload the TPRM Assessment Excel file in the sidebar to view the dashboard.")
     st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?fm=jpg&q=80&w=2000&blend=000000&blend-mode=overlay&blend-alpha=30", use_column_width=True)
@@ -403,7 +416,7 @@ if uploaded_file is not None and not error:
     
     # Render persistent chat history
     if st.session_state.copilot_history:
-        with st.expander("💬 **Copilot Chat History** (click to expand)", expanded=False):
+        with st.expander("💬 **Copilot Chat History** (click to expand)", expanded=True):
             for msg in st.session_state.copilot_history:
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
@@ -415,14 +428,15 @@ if uploaded_file is not None and not error:
         
         with st.spinner("Copilot is analyzing..."):
             import sys
-            import requests
             root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
             if root_path not in sys.path:
                 sys.path.append(root_path)
             
+            _api_key = st.session_state.get("gemini_api_key", "")
+            
             if is_graph_req:
                 from backend.services.llm_service import generate_graph_config
-                config = generate_graph_config(prompt, list(filtered_df.columns))
+                config = generate_graph_config(prompt, list(filtered_df.columns), api_key=_api_key)
                 if config and not config.get("error"):
                     st.session_state.custom_graphs.append({
                         "query": prompt,
@@ -436,9 +450,9 @@ if uploaded_file is not None and not error:
                     st.session_state.copilot_history.append({"role": "assistant", "content": reply})
                     st.rerun()
             else:
-                from backend.services.llm_service import generate_pandas_filter, OLLAMA_API_URL, MODEL_NAME
+                from backend.services.llm_service import generate_pandas_filter, call_generative
                     
-                filter_query = generate_pandas_filter(prompt, list(filtered_df.columns))
+                filter_query = generate_pandas_filter(prompt, list(filtered_df.columns), api_key=_api_key)
                 use_generative = True
                 ans_text = ""
                 
@@ -455,12 +469,7 @@ if uploaded_file is not None and not error:
                     sample_csv = filtered_df.head(20).to_csv(index=False)
                     summary_stats = f"Total vendors: {len(filtered_df)}, High Risk: {len(filtered_df[filtered_df['Risk Level']=='High'])}, Medium Risk: {len(filtered_df[filtered_df['Risk Level']=='Medium'])}, Low Risk: {len(filtered_df[filtered_df['Risk Level']=='Low'])}"
                     gen_prompt = f"You are a data analyst. Here are some stats about the dataset:\n{summary_stats}\n\nHere is a sample of the data:\n{sample_csv}\n\nUser question: {prompt}\n\nProvide a clear, concise answer."
-                    payload = {"model": MODEL_NAME, "prompt": gen_prompt, "stream": False}
-                    try:
-                        res = requests.post(OLLAMA_API_URL, json=payload, timeout=60)
-                        ans_text = res.json().get('response', 'Could not generate an answer.')
-                    except Exception:
-                        ans_text = "⚠️ Failed to connect to AI engine."
+                    ans_text = call_generative(gen_prompt, api_key=_api_key, timeout=60)
                 
                 st.session_state.copilot_history.append({"role": "assistant", "content": ans_text})
                 st.rerun()
