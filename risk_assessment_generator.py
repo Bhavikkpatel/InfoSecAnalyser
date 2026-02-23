@@ -7,7 +7,7 @@ fake = Faker()
 
 # -------- CONFIG --------
 NUM_VENDORS = 2000 
-OUTPUT_FILE = "sample_tprm_assessments.xlsx"
+OUTPUT_FILE = "sample_tprm_assessments_v2.xlsx"
 # ------------------------
 
 def random_yes_no():
@@ -38,6 +38,7 @@ for _ in range(NUM_VENDORS):
     vendor = {
         # General Company Information
         "Legal Name": fake.company(),
+        "Assessment Date": fake.date_between(start_date='-2y', end_date='today'),
         "Trade Name": fake.company_suffix(),
         "Business Registration Number": str(uuid.uuid4())[:12],
         "Country of Incorporation": fake.country(),
