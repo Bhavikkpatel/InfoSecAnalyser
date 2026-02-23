@@ -131,33 +131,49 @@ For example, if columns are ['Incident Response', 'Status'] and query is "open i
         return "None"
 
 
-def generate_graph_config(query: str, columns: list, api_key: str = "") -> dict:
+def generate_graph_config(query: str, columns: list, api_key: str = "") -> list:
+    """Returns a list of graph config dicts. Each has x_col, y_col, aggregation, graph_type."""
     prompt = f"""
 You are a data visualization assistant.
 Given the pandas columns: {columns}
 And the user's graph request: "{query}"
 
-Extract the parameters needed to plot this chart.
-Output exactly and ONLY a JSON object with the following keys:
-- "x_col": the exact name of the column for the x-axis (e.g. categorical grouping). Must be from the given list.
-- "y_col": the exact name of the numeric column for the y-axis, or null if counting occurrences.
+Extract the parameters needed to plot chart(s) that fully answer the user's request.
+If the request involves MULTIPLE aspects or columns (e.g. multiple security controls, comparing several metrics), 
+generate MULTIPLE chart configs — one for each relevant aspect.
+
+Output a JSON ARRAY of objects. Each object must have these keys:
+- "x_col": the exact column name for the x-axis grouping. Must be from the given list.
+- "y_col": the exact column name for the y-axis, or null if counting occurrences.
 - "aggregation": one of "count", "sum", "mean", "min", "max".
 - "graph_type": one of "bar", "line", "pie".
+- "title": a short descriptive title for this specific chart.
 
-Example Output:
-{{"x_col": "Department", "y_col": null, "aggregation": "count", "graph_type": "bar"}}
+Example for a single chart:
+[{{"x_col": "Department", "y_col": null, "aggregation": "count", "graph_type": "bar", "title": "Vendors by Department"}}]
 
-DO NOT return any Markdown formatting (no ` ```json ` blocks), only the raw JSON.
+Example for multiple charts:
+[
+  {{"x_col": "Formal InfoSec Policy", "y_col": null, "aggregation": "count", "graph_type": "pie", "title": "InfoSec Policy Coverage"}},
+  {{"x_col": "Data Encryption", "y_col": null, "aggregation": "count", "graph_type": "bar", "title": "Data Encryption Methods"}},
+  {{"x_col": "Incident Response Plan", "y_col": null, "aggregation": "count", "graph_type": "pie", "title": "Incident Response Coverage"}}
+]
+
+DO NOT return any Markdown formatting, only the raw JSON array.
 """
     try:
-        result_text = _call_llm(prompt, api_key=api_key, format_json=True, timeout=30)
-        # Strip markdown formatting if present
+        result_text = _call_llm(prompt, api_key=api_key, format_json=True, timeout=45)
         if result_text.startswith("```"):
             result_text = result_text.split("\n", 1)[-1].rsplit("\n", 1)[0]
-        result_json = json.loads(result_text)
-        return result_json
+        parsed = json.loads(result_text)
+        # Normalize: if LLM returns a single dict, wrap it in a list
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+        if isinstance(parsed, list) and len(parsed) > 0:
+            return parsed
+        return []
     except Exception:
-        return {}
+        return []
 
 
 def call_generative(prompt: str, api_key: str = "", timeout: int = 60) -> str:

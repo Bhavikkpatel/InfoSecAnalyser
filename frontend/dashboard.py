@@ -149,12 +149,14 @@ def generate_custom_chart_figure(df, config):
         grouped = df.groupby(x_col)[y_col].agg(aggr).reset_index()
         y_col_out = y_col
         
+    chart_title = config.get("title", f"{y_col_out} by {x_col}")
+        
     if graph_type == "line":
-        return px.line(grouped, x=x_col, y=y_col_out, title=f"{y_col_out} by {x_col}")
+        return px.line(grouped, x=x_col, y=y_col_out, title=chart_title)
     elif graph_type == "pie":
-        return px.pie(grouped, names=x_col, values=y_col_out, title=f"{y_col_out} by {x_col}")
+        return px.pie(grouped, names=x_col, values=y_col_out, title=chart_title)
     else:
-        return px.bar(grouped, x=x_col, y=y_col_out, title=f"{y_col_out} by {x_col}")
+        return px.bar(grouped, x=x_col, y=y_col_out, title=chart_title)
 
 with st.sidebar:
     st.header("📂 Data Upload")
@@ -436,14 +438,17 @@ if uploaded_file is not None and not error:
             
             if is_graph_req:
                 from backend.services.llm_service import generate_graph_config
-                config = generate_graph_config(prompt, list(filtered_df.columns), api_key=_api_key)
-                if config and not config.get("error"):
-                    st.session_state.custom_graphs.append({
-                        "query": prompt,
-                        "config": config
-                    })
+                configs = generate_graph_config(prompt, list(filtered_df.columns), api_key=_api_key)
+                if configs and len(configs) > 0:
+                    for cfg in configs:
+                        title = cfg.get("title", prompt)
+                        st.session_state.custom_graphs.append({
+                            "query": title,
+                            "config": cfg
+                        })
                     save_custom_config(st.session_state.custom_graphs)
-                    st.session_state.copilot_history.append({"role": "assistant", "content": f"📊 Chart generated for: *{prompt}*"})
+                    chart_word = "chart" if len(configs) == 1 else f"{len(configs)} charts"
+                    st.session_state.copilot_history.append({"role": "assistant", "content": f"📊 Generated **{chart_word}** for: *{prompt}*"})
                     st.rerun()
                 else:
                     reply = "❌ AI couldn't generate a valid chart configuration for this query."
