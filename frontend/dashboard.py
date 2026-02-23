@@ -430,21 +430,27 @@ if uploaded_file is not None and not error:
                     st.markdown(answer_text)
                     
                 filter_query = generate_pandas_filter(prompt, list(filtered_df.columns))
+                use_generative = True  # default to generative
+                
                 if filter_query and filter_query.lower() != "none":
                     try:
                         ans_df = filtered_df.query(filter_query)
                         count = len(ans_df)
                         ans_text = f"**Question:** {prompt}\n\n**Result:** Found **{count}** records matching your query."
                         show_answer(ans_text)
-                    except Exception as e:
-                        st.toast(f"Failed to filter data: {e}")
-                else:
-                    summary_stats = f"Total vendors: {len(filtered_df)}, High Risk: {len(filtered_df[filtered_df['Risk Level']=='High'])}, Medium Risk: {len(filtered_df[filtered_df['Risk Level']=='Medium'])}"
-                    gen_prompt = f"Given data stats: {summary_stats}. Answer user query concisely: {prompt}"
+                        use_generative = False
+                    except Exception:
+                        use_generative = True  # fallback to generative on error
+                
+                if use_generative:
+                    # Build a rich summary for the LLM to reason over
+                    sample_csv = filtered_df.head(20).to_csv(index=False)
+                    summary_stats = f"Total vendors: {len(filtered_df)}, High Risk: {len(filtered_df[filtered_df['Risk Level']=='High'])}, Medium Risk: {len(filtered_df[filtered_df['Risk Level']=='Medium'])}, Low Risk: {len(filtered_df[filtered_df['Risk Level']=='Low'])}"
+                    gen_prompt = f"You are a data analyst. Here are some stats about the dataset:\n{summary_stats}\n\nHere is a sample of the data:\n{sample_csv}\n\nUser question: {prompt}\n\nProvide a clear, concise answer."
                     payload = {"model": MODEL_NAME, "prompt": gen_prompt, "stream": False}
                     try:
-                        res = requests.post(OLLAMA_API_URL, json=payload, timeout=30)
-                        ans_text = f"**Question:** {prompt}\n\n**Result:** {res.json().get('response', '')}"
+                        res = requests.post(OLLAMA_API_URL, json=payload, timeout=60)
+                        ans_text = f"**Question:** {prompt}\n\n{res.json().get('response', 'Could not generate an answer.')}"
                         show_answer(ans_text)
                     except Exception:
                         st.toast("Failed to connect to AI engine.")
