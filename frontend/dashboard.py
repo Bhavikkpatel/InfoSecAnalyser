@@ -398,10 +398,19 @@ else:
 
 # Unified Sticky Bottom Copilot
 if uploaded_file is not None and not error:
-    # Use st.container(border=True) to float at bottom in streamlit? 
-    # Actually st.chat_input is natively sticky at the bottom
+    if "copilot_history" not in st.session_state:
+        st.session_state.copilot_history = []
+    
+    # Render persistent chat history
+    if st.session_state.copilot_history:
+        with st.expander("💬 **Copilot Chat History** (click to expand)", expanded=False):
+            for msg in st.session_state.copilot_history:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+    
     prompt = st.chat_input("💬 Ask a question or type 'plot [graph type]...' to generate a chart")
     if prompt:
+        st.session_state.copilot_history.append({"role": "user", "content": prompt})
         is_graph_req = any(w in prompt.lower() for w in ['plot', 'draw', 'graph', 'chart', 'visualize', 'pie', 'bar', 'trend', 'scatter'])
         
         with st.spinner("Copilot is analyzing..."):
@@ -420,40 +429,41 @@ if uploaded_file is not None and not error:
                         "config": config
                     })
                     save_custom_config(st.session_state.custom_graphs)
+                    st.session_state.copilot_history.append({"role": "assistant", "content": f"📊 Chart generated for: *{prompt}*"})
                     st.rerun()
                 else:
-                    st.toast("❌ AI couldn't generate a valid chart configuration for this query.", icon="🚨")
+                    reply = "❌ AI couldn't generate a valid chart configuration for this query."
+                    st.session_state.copilot_history.append({"role": "assistant", "content": reply})
+                    st.rerun()
             else:
                 from backend.services.llm_service import generate_pandas_filter, OLLAMA_API_URL, MODEL_NAME
-                @st.dialog("🤖 AI Answer")
-                def show_answer(answer_text):
-                    st.markdown(answer_text)
                     
                 filter_query = generate_pandas_filter(prompt, list(filtered_df.columns))
-                use_generative = True  # default to generative
+                use_generative = True
+                ans_text = ""
                 
                 if filter_query and filter_query.lower() != "none":
                     try:
                         ans_df = filtered_df.query(filter_query)
                         count = len(ans_df)
-                        ans_text = f"**Question:** {prompt}\n\n**Result:** Found **{count}** records matching your query."
-                        show_answer(ans_text)
+                        ans_text = f"Found **{count}** records matching your query."
                         use_generative = False
                     except Exception:
-                        use_generative = True  # fallback to generative on error
+                        use_generative = True
                 
                 if use_generative:
-                    # Build a rich summary for the LLM to reason over
                     sample_csv = filtered_df.head(20).to_csv(index=False)
                     summary_stats = f"Total vendors: {len(filtered_df)}, High Risk: {len(filtered_df[filtered_df['Risk Level']=='High'])}, Medium Risk: {len(filtered_df[filtered_df['Risk Level']=='Medium'])}, Low Risk: {len(filtered_df[filtered_df['Risk Level']=='Low'])}"
                     gen_prompt = f"You are a data analyst. Here are some stats about the dataset:\n{summary_stats}\n\nHere is a sample of the data:\n{sample_csv}\n\nUser question: {prompt}\n\nProvide a clear, concise answer."
                     payload = {"model": MODEL_NAME, "prompt": gen_prompt, "stream": False}
                     try:
                         res = requests.post(OLLAMA_API_URL, json=payload, timeout=60)
-                        ans_text = f"**Question:** {prompt}\n\n{res.json().get('response', 'Could not generate an answer.')}"
-                        show_answer(ans_text)
+                        ans_text = res.json().get('response', 'Could not generate an answer.')
                     except Exception:
-                        st.toast("Failed to connect to AI engine.")
+                        ans_text = "⚠️ Failed to connect to AI engine."
+                
+                st.session_state.copilot_history.append({"role": "assistant", "content": ans_text})
+                st.rerun()
 
 if "drilldown_pending" in st.session_state:
     dd = st.session_state.pop("drilldown_pending")
